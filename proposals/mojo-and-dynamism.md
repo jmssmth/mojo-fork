@@ -52,7 +52,7 @@ An implementation question here would be "when does the body get executed?" when
 
 A primary goal of Mojo is to [minimize the syntactic differences](https://docs.modular.com/mojo/why-mojo.html#intentional-differences-from-python) with Python. We also have to balance that need with what the right default for Mojo is, and this affects the bias on whether this decorator is "opt-in" or "opt-out".
 
-We find it appealing to follow the Swift approach by making "full dynamic" an opt-in choice for a Mojo class. This choice would add another syntactic divergence between Mojo and Python, but it is one that can be alleviated with an automatic mechanical tranformer from Python code to Mojo code (e.g. to deal with new keywords we take). In this case, all Python classes will be translated by sticking `@dynamic` on them, and they can be removed for incremental boosts to performance.
+We find it appealing to follow the Swift approach by making "full dynamic" an opt-in choice for a Mojo class. This choice would add another syntactic divergence between Mojo and Python, but it is one that can be alleviated with an automatic mechanical transformer from Python code to Mojo code (e.g. to deal with new keywords we take). In this case, all Python classes will be translated by sticking `@dynamic` on them, and they can be removed for incremental boosts to performance.
 
 An alternate design is to require opt-in to "constraint dynamism" by adding a `@strict` (or use another keyword altogether) for vtable dynamism.  We can evaluate tradeoffs as more of the model is implemented.
 
@@ -83,7 +83,7 @@ def foo():
     baz() # throws an 'UnboundLocalError'
 ```
 
-This gets at the heart of how Mojo should treat implicitly declared variables in `def`s. The short answer is: exactly how Python does. `def`s should carry a function-scoped hash table of local variables that is populated and queried at runtime. In other words, lookup of implicitly-declared variables woudl be deferred to runtime. On the other hand, the function does need to have a notion of what variable *could* be available in the function, in order to emit `UnboundLocalError`s as required. Of course, the compiler can optimize the table away and do all the nice stuff compilers do if possible.
+This gets at the heart of how Mojo should treat implicitly declared variables in `def`s. The short answer is: exactly how Python does. `def`s should carry a function-scoped hash table of local variables that is populated and queried at runtime. In other words, lookup of implicitly-declared variables would be deferred to runtime. On the other hand, the function does need to have a notion of what variable *could* be available in the function, in order to emit `UnboundLocalError`s as required. Of course, the compiler can optimize the table away and do all the nice stuff compilers do if possible.
 
 Difficulty arises when discussing `def`s themselves. Although `def`s should internally support full hashtable dynamism, what kind of objects are `def`s themselves? For instance:
 
@@ -130,7 +130,7 @@ The fourth category isn't explored here, but will important when/if we support s
 
 The highest level of dynamism and the most faithful compatibility doesn't come from Mojo itself, it comes from Mojo's first class interoperability with CPython.  This in effect will be Mojo's escape hatch for compatibility purposes and is what gives Mojo access to all of Python's vast ecosystem.  Below that, Mojo will provide an emulation of Python's hash-table dynamism that is a faithful but not quite identical replication of Python behaviour (no GIL, for example!).  Building this out will be a huge undertaking, and is something Mojo should do over time.
 
-The most important thing to remember is that Mojo is not a "Python compiler".  The benefit of sharing the same syntax as Python, however, means seemless interop is on the table:
+The most important thing to remember is that Mojo is not a "Python compiler".  The benefit of sharing the same syntax as Python, however, means seamless interop is on the table:
 
 ```python
 @python

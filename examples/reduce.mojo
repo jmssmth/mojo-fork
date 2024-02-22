@@ -10,105 +10,81 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
+# RUN: %mojo -debug-level full %s | FileCheck %s
 
 # This sample implements a simple reduction operation on a
 # large array of values to produce a single result.
 # Reductions and scans are common algorithm patterns in parallel computing.
 
-from benchmark import Benchmark
+from benchmark import benchmark, Unit, keep
 from time import now
 from algorithm import sum
 from random import rand
 from memory.buffer import Buffer
+from python import Python
 
+# Change these numbers to reduce on different sizes
+alias size_small: Int = 1 << 21
+alias size_large: Int = 1 << 27
 
-# Simple array struct
-struct ArrayInput:
-    var data: DTypePointer[DType.float32]
-
-    fn __init__(inout self, size: Int):
-        self.data = DTypePointer[DType.float32].alloc(size)
-        rand(self.data, size)
-
-    fn __del__(owned self):
-        self.data.free()
-
-    @always_inline
-    fn __getitem__(self, x: Int) -> Float32:
-        return self.data.load(x)
+# Datatype for Tensor/Array
+alias type = DType.float32
 
 
 # Use the https://en.wikipedia.org/wiki/Kahan_summation_algorithm
 # Simple summation of the array elements
-fn reduce_sum_naive(data: ArrayInput, size: Int) -> Float32:
-    var sum = data[0]
+fn naive_reduce_sum[size: Int](array: Tensor[type]) -> Float32:
+    let A = array
+    var my_sum = array[0]
     var c: Float32 = 0.0
-    for i in range(size):
-        let y = data[i] - c
-        let t = sum + y
-        c = (t - sum) - y
-        sum = t
-    return sum
+    for i in range(array.dim(0)):
+        let y = array[i] - c
+        let t = my_sum + y
+        c = (t - my_sum) - y
+        my_sum = t
+    return my_sum
 
 
-fn benchmark_naive_reduce_sum(size: Int) -> Float32:
-    print("Computing reduction sum for array num elements: ", size)
-    var A = ArrayInput(size)
-    # Prevent DCE
-    var mySum: Float32 = 0.0
+fn stdlib_reduce_sum[size: Int](array: Tensor[type]) -> Float32:
+    let my_sum = sum(array._to_buffer())
+    return my_sum
 
-    @always_inline
+
+fn pretty_print(name: StringLiteral, elements: Int, time: Float64) raises:
+    let py = Python.import_module("builtins")
+    _ = py.print(
+        py.str("{:<16} {:>11,} {:>8.2f}ms").format(
+            String(name) + " elements:", elements, time
+        )
+    )
+
+
+fn bench[
+    func: fn[size: Int] (array: Tensor[type]) -> Float32,
+    size: Int,
+    name: StringLiteral,
+](array: Tensor[type]) raises:
     @parameter
-    fn test_fn():
-        _ = reduce_sum_naive(A, size)
+    fn runner():
+        let result = func[size](array)
+        keep(result)
 
-    let bench_time = Float64(Benchmark().run[test_fn]())
-    return mySum
-
-
-fn benchmark_stdlib_reduce_sum(size: Int) -> Float32:
-    # Allocate a Buffer and then use the Mojo stdlib Reduction class
-    # TODO: Use globals
-    # alias numElem = size
-    alias numElem = 1 << 30
-    # Can use either stack allocation or heap
-    # see stackalloc
-    # var A = Buffer[numElem, DType.float32].stack_allocation()
-    # see heapalloc
-    var B = DTypePointer[DType.float32].alloc(numElem)
-    var A = Buffer[numElem, DType.float32](B)
-
-    # initialize buffer
-    for i in range(numElem):
-        A[i] = Float32(i)
-
-    # Prevent DCE
-    var mySum: Float32 = 0.0
-    print("Computing reduction sum for array num elements: ", size)
-
-    @always_inline
-    @parameter
-    fn test_fn():
-        mySum = sum[numElem, DType.float32](A)
-
-    let bench_time = Float64(Benchmark().run[test_fn]())
-    return mySum
+    let ms = benchmark.run[runner](max_runtime_secs=0.5).mean(Unit.ms)
+    pretty_print(name, size, ms)
 
 
-fn main():
-    # Number of array elements
-    let size = 1 << 21
-    print("# Reduction sum across a large array. The naive algorithm's ")
-    print("# computation time scales with the size of the array; while Mojo ")
-    print("# exhibits significantly better scaling...")
-    var eval_begin: Float64 = now()
-    var sum = benchmark_naive_reduce_sum(size)
-    var eval_end: Float64 = now()
-    var execution_time = Float64((eval_end - eval_begin)) / 1e6
-    print("Completed naive reduction sum: ", sum, " in ", execution_time, "ms")
+fn main() raises:
+    print(
+        "Sum all values in a small array and large array\n"
+        "Shows algorithm.sum from stdlib with much better performance\n"
+    )
+    # Create two 1-dimensional tensors i.e. arrays
+    let small_array = rand[type](size_small)
+    let large_array = rand[type](size_large)
 
-    eval_begin = now()
-    sum = benchmark_stdlib_reduce_sum(size)
-    eval_end = now()
-    execution_time = Float64((eval_end - eval_begin)) / 1e6
-    print("Completed stdlib reduction sum: ", sum, " in ", execution_time, "ms")
+    bench[naive_reduce_sum, size_small, "naive"](small_array)
+    bench[naive_reduce_sum, size_large, "naive"](large_array)
+
+    bench[stdlib_reduce_sum, size_small, "stdlib"](small_array)
+    # CHECK: stdlib elements
+    bench[stdlib_reduce_sum, size_large, "stdlib"](large_array)

@@ -1,14 +1,30 @@
-from benchmark import Benchmark
+# ===----------------------------------------------------------------------=== #
+# Copyright (c) 2023, Modular Inc. All rights reserved.
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions:
+# https://llvm.org/LICENSE.txt
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ===----------------------------------------------------------------------=== #
+
+# RUN: %mojo -debug-level full %s | FileCheck %s
+import benchmark
 from complex import ComplexSIMD, ComplexFloat64
 from math import iota
 from python import Python
-from runtime.llcl import num_cores, Runtime
+from runtime.llcl import Runtime
+from sys.info import num_logical_cores
 from algorithm import parallelize, vectorize
 from tensor import Tensor
 from utils.index import Index
+from python import Python
 
 alias float_type = DType.float64
-alias simd_width = simdwidthof[float_type]()
+alias simd_width = 2 * simdwidthof[float_type]()
 
 alias width = 960
 alias height = 960
@@ -24,21 +40,26 @@ fn mandelbrot_kernel_SIMD[
     simd_width: Int
 ](c: ComplexSIMD[float_type, simd_width]) -> SIMD[float_type, simd_width]:
     """A vectorized implementation of the inner mandelbrot computation."""
-    var z = ComplexSIMD[float_type, simd_width](0, 0)
+    let cx = c.re
+    let cy = c.im
+    var x = SIMD[float_type, simd_width](0)
+    var y = SIMD[float_type, simd_width](0)
+    var y2 = SIMD[float_type, simd_width](0)
     var iters = SIMD[float_type, simd_width](0)
 
-    var in_set_mask: SIMD[DType.bool, simd_width] = True
+    var t: SIMD[DType.bool, simd_width] = True
     for i in range(MAX_ITERS):
-        if not in_set_mask.reduce_or():
+        if not t.reduce_or():
             break
-        in_set_mask = z.squared_norm() <= 4
-        iters = in_set_mask.select(iters + 1, iters)
-        z = z.squared_add(c)
-
+        y2 = y * y
+        y = x.fma(y + y, cy)
+        t = x.fma(x, y2) <= 4
+        x = x.fma(x, cx - y2)
+        iters = t.select(iters + 1, iters)
     return iters
 
 
-fn main():
+fn main() raises:
     let t = Tensor[float_type](height, width)
 
     @parameter
@@ -48,7 +69,7 @@ fn main():
 
         @parameter
         fn compute_vector[simd_width: Int](col: Int):
-            """Each time we oeprate on a `simd_width` vector of pixels."""
+            """Each time we operate on a `simd_width` vector of pixels."""
             let cx = min_x + (col + iota[float_type, simd_width]()) * scale_x
             let cy = min_y + row * scale_y
             let c = ComplexSIMD[float_type, simd_width](cx, cy)
@@ -64,22 +85,24 @@ fn main():
         for row in range(height):
             worker(row)
 
-    let vectorized_ms = Benchmark().run[bench[simd_width]]() / 1e6
-    print("Number of hardware cores:", num_cores())
-    print("Vectorized:", vectorized_ms, "ms")
+    let vectorized = benchmark.run[bench[simd_width]](
+        max_runtime_secs=0.5
+    ).mean()
+    print("Number of threads:", num_logical_cores())
+    print("Vectorized:", vectorized, "s")
 
-    # Parallelized
-    with Runtime() as rt:
-
+    with Runtime(num_logical_cores()) as rt:
+        # Parallelized
         @parameter
         fn bench_parallel[simd_width: Int]():
-            parallelize[worker](rt, height, 5 * num_cores())
+            parallelize[worker](rt, height, height)
+            # parallelize[worker](height, height)
 
-        alias simd_width = simdwidthof[DType.float64]()
-        let parallelized_ms = Benchmark().run[
-            bench_parallel[simd_width]
-        ]() / 1e6
-        print("Parallelized:", parallelized_ms, "ms")
-        print("Parallel speedup:", vectorized_ms / parallelized_ms)
+        let parallelized = benchmark.run[bench_parallel[simd_width]](
+            max_runtime_secs=0.5
+        ).mean()
+        print("Parallelized:", parallelized, "s")
+        # CHECK: Parallel speedup
+        print("Parallel speedup:", vectorized / parallelized)
 
     _ = t  # Make sure tensor isn't destroyed before benchmark is finished

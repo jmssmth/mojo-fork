@@ -10,14 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ===----------------------------------------------------------------------=== #
+# RUN: %mojo -debug-level full %s | FileCheck %s
 
 # This sample implements the nbody benchmarking in
 # https://benchmarksgame-team.pages.debian.net/benchmarksgame/performance/nbody.html
 
 from utils.index import StaticTuple
-from algorithm import unroll
 from math import sqrt
-from benchmark import Benchmark
+from benchmark import run
 
 alias PI = 3.141592653589793
 alias SOLAR_MASS = 4 * PI * PI
@@ -48,8 +48,8 @@ alias NUM_BODIES = 5
 fn offset_momentum(inout bodies: StaticTuple[NUM_BODIES, Planet]):
     var p = SIMD[DType.float64, 4]()
 
-    @parameter
-    fn _iter[i: Int]():
+    @unroll
+    for i in range(NUM_BODIES):
         p += bodies[i].velocity * bodies[i].mass
 
     var body = bodies[0]
@@ -59,11 +59,12 @@ fn offset_momentum(inout bodies: StaticTuple[NUM_BODIES, Planet]):
 
 
 fn advance(inout bodies: StaticTuple[NUM_BODIES, Planet], dt: Float64):
-    @parameter
-    fn _outer[i: Int]():
-        @parameter
-        fn _inner[j: Int]():
-            var body_i = bodies[i]
+    @unroll
+    for i in range(NUM_BODIES):
+        var body_i = bodies[i]
+
+        @unroll(NUM_BODIES - 1)
+        for j in range(NUM_BODIES - i - 1):
             var body_j = bodies[j + i + 1]
             let diff = body_i.pos - body_j.pos
             let diff_sqr = (diff * diff).reduce_add()
@@ -72,27 +73,22 @@ fn advance(inout bodies: StaticTuple[NUM_BODIES, Planet], dt: Float64):
             body_i.velocity -= diff * body_j.mass * mag
             body_j.velocity += diff * body_i.mass * mag
 
-            bodies[i] = body_i
             bodies[j + i + 1] = body_j
 
-        unroll[NUM_BODIES - i - 1, _inner]()
+        bodies[i] = body_i
 
-    unroll[NUM_BODIES, _outer]()
-
-    @parameter
-    fn _update[i: Int]():
+    @unroll
+    for i in range(NUM_BODIES):
         var body = bodies[i]
         body.pos += dt * body.velocity
         bodies[i] = body
-
-    unroll[NUM_BODIES, _update]()
 
 
 fn energy(bodies: StaticTuple[NUM_BODIES, Planet]) -> Float64:
     var e: Float64 = 0
 
-    @parameter
-    fn _outer[i: Int]():
+    @unroll
+    for i in range(NUM_BODIES):
         let body_i = bodies[i]
         e += (
             0.5
@@ -100,21 +96,16 @@ fn energy(bodies: StaticTuple[NUM_BODIES, Planet]) -> Float64:
             * ((body_i.velocity * body_i.velocity).reduce_add())
         )
 
-        @parameter
-        fn _inner[j: Int]():
+        for j in range(NUM_BODIES - i - 1):
             let body_j = bodies[j + i + 1]
             let diff = body_i.pos - body_j.pos
             let distance = sqrt((diff * diff).reduce_add())
             e -= (body_i.mass * body_j.mass) / distance
 
-        unroll[NUM_BODIES - i - 1, _inner]()
-
-    unroll[NUM_BODIES, _outer]()
-
     return e
 
 
-fn run():
+fn bench():
     let Sun = Planet(
         0,
         0,
@@ -189,24 +180,19 @@ fn run():
     )
     offset_momentum(system)
 
-    let derived_energy: String = "Energy of System: "
-    print(derived_energy)
-    print(energy(system))
+    print("Energy of System:", energy(system))
 
     for i in range(50_000_000):
         advance(system, 0.01)
 
-    print(derived_energy)
-    print(energy(system))
+    # CHECK: Energy of System
+    print("Energy of System:", energy(system))
 
 
 fn benchmark():
-    fn _bench():
-        run()
-
-    print(Benchmark().run[_bench]() / 1.0e9)
+    print(run[bench](max_runtime_secs=0.5).mean())
 
 
 fn main():
     print("Starting nbody...")
-    run()
+    bench()

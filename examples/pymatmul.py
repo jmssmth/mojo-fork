@@ -12,17 +12,12 @@
 # ===----------------------------------------------------------------------=== #
 
 # Simple program demonstrating a naive matrix multiplication in Python
-
-import importlib
-import sys
-import subprocess
-
-if not importlib.find_loader("numpy"):
-    print("Numpy not found, installing...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "numpy"])
-
-import numpy as np
 from timeit import timeit
+
+import check_mod
+
+check_mod.install_if_missing("numpy")
+import numpy as np
 
 
 class PyMatrix:
@@ -51,10 +46,19 @@ def benchmark_matmul_python(M, N, K):
     C = PyMatrix(list(np.zeros((M, N))), M, N)
     secs = timeit(lambda: matmul_python(C, A, B), number=2) / 2
     gflops = ((2 * M * N * K) / secs) / 1e9
-    print(gflops, "GFLOP/s")
+    return gflops
+
+
+def benchmark_matmul_numpy(M, N, K):
+    A = np.random.rand(M, K).astype(np.float32)
+    B = np.random.rand(K, N).astype(np.float32)
+    secs = timeit(lambda: A @ B, number=10) / 10
+    gflops = ((2 * M * N * K) / secs) / 1e9
     return gflops
 
 
 if __name__ == "__main__":
     print("Throughput of a 128x128 matrix multiplication in Python:")
-    benchmark_matmul_python(128, 128, 128)
+    print(benchmark_matmul_python(128, 128, 128))
+    print("Throughput of a 128x128 matrix multiplication in Python numpy:")
+    print(benchmark_matmul_numpy(128, 128, 128))
